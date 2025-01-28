@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package com.phoops.vilma;
+
+option go_package = "internal/infrastructure/proto";
+
+message Identity {
+    string id = 1;
+    string first_name = 2;
+    string last_name = 3;
+    string email = 4;
+}
+
+message GetIdentityByIdRequest {
+    string identity_id = 1;
+}
+
+service VilmaIdentityPool {
+    rpc GetIdentityByIdentityId(GetIdentityByIdRequest) returns (Identity);
+}

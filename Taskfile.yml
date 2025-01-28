@@ -1,0 +1,130 @@
+---
+version: "3"
+
+# yamllint disable rule:line-length
+tasks:
+  ### vilma
+
+  build-proto-stubs:
+    desc: "Build grpc stubs based on proto definitions"
+    cmds:
+      - "protoc --experimental_allow_proto3_optional --plugin $(go env GOPATH)/bin/protoc-gen-go --plugin $(go env GOPATH)/bin/protoc/gen-go-grpc --proto_path=internal/infrastructure/proto --go_out . --go-grpc_out . internal/infrastructure/proto/*.proto"
+
+  run-vilma-dev:
+    desc: "Run vilma with air"
+    cmds:
+      - "air -c .air.vilma.toml"
+
+  build-vilma-dev:
+    desc: Build vilma executable with support for debugging
+    deps:
+      - task: template/go-build-dev
+        vars:
+          CMD_NAME: vilma
+
+  build-vilma-prod:
+    desc: "Build vilma binary for production release"
+    deps:
+      - task: template/go-build-binary
+        vars:
+          CMD_NAME: "vilma"
+
+  build-docker-vilma:
+    desc: "Build vilma prod container"
+    deps:
+      - task: template/docker-build
+        vars:
+          IMAGE_NAME: vilma
+          DOCKER_FILE_PATH: ./docker/vilma.dockerfile
+
+  push-docker-vilma:
+    desc: "Push vilma prod container to nexus"
+    deps:
+      - task: template/docker-push
+        vars:
+          IMAGE_NAME: vilma
+
+  start-vilma-grpcui:
+    desc: "Start GRPCUI for vilma"
+    deps:
+      - task: template/start-grpcui
+        vars:
+          LOCAL_HOST_PORT: 9095
+
+  # Group commands
+  build-and-push-docker-images:
+    desc: "Build all images, then push to nexus"
+    # first run build, and only after push
+    cmds:
+      - task: build-docker-images
+      - task: push-docker-images
+
+  build-docker-images:
+    desc: "Build all images"
+    # do all the builds in parallel
+    deps:
+      - build-docker-vilma
+
+  push-docker-images:
+    desc: "Push all images to nexus"
+    # do all the pushes in parallel
+    deps:
+      - task: push-docker-vilma
+
+
+  # utils
+  install-repo-hooks:
+    desc: Copy and enable the project hooks (linting, etc...)
+    cmds:
+      - "cp tools/pre-commit .git/hooks/pre-commit"
+      - "chmod +x .git/hooks/pre-commit"
+
+  lint:
+    desc: "lint the project"
+    cmds:
+      - golangci-lint -v run
+
+  # templates
+  template/go-build-binary:
+    env:
+      CGO_ENABLED: 0
+    vars:
+      VERSION:
+        sh: git describe --tags --always --dirty --match=v* 2> /dev/null || cat $(CURDIR)/.version 2> /dev/null || echo v0
+      BUILD_DATE:
+        sh: date +%Y%m%d%H%M%S
+    cmds:
+      - go build -ldflags '-X main.Version={{.VERSION}} -X main.BuildDate={{ .BUILD_DATE }}' -o ./build/{{.CMD_NAME}} ./cmd/{{.CMD_NAME}}
+
+  template/go-build-dev:
+    cmds:
+      - go build -gcflags="all=-N -l" -o ./build/{{.CMD_NAME}} ./cmd/{{.CMD_NAME}}
+
+  template/go-run-debug:
+    cmds:
+      - dlv --continue --listen=:40001 --headless=true --api-version=2 --accept-multiclient exec ./build/{{.CMD_NAME}}
+
+  template/docker-build:
+    env:
+      DOCKER_BUILDKIT: "1"
+    vars:
+      IMAGE_REPO_BASE: "_REPLACE_WITH_IMAGE_REPO_BASE_"
+      TAG:
+        sh: echo "$BITBUCKET_TAG"
+      LOCAL_IMAGE: "{{.IMAGE_NAME}}:{{.TAG}}"
+      REMOTE_IMAGE: "{{.IMAGE_REPO_BASE}}/{{.LOCAL_IMAGE}}"
+    cmds:
+      - docker build --ssh default -f '{{.DOCKER_FILE_PATH}}' -t '{{.LOCAL_IMAGE}}' -t '{{.REMOTE_IMAGE}}' .
+
+  template/docker-push:
+    vars:
+      IMAGE_REPO_BASE: "_REPLACE_WITH_IMAGE_REPO_BASE_"
+      TAG:
+        sh: echo $BITBUCKET_TAG
+      LOCAL_IMAGE: "{{.IMAGE_NAME}}:{{.TAG}}"
+      REMOTE_IMAGE: "{{.IMAGE_REPO_BASE}}/{{.LOCAL_IMAGE}}"
+    cmds:
+      - docker push '{{.REMOTE_IMAGE}}'
+  template/start-grpcui:
+    cmds:
+      - LOCAL_HOST_PORT="{{ .LOCAL_HOST_PORT }}" docker-compose up grpcui

@@ -1,0 +1,13 @@
+version: "3.8"
+services:
+  grpcui:
+    # Do not start it with docker-compose up
+    profiles:
+      - manual_start
+    # Access the host from inside docker, now works on Linux, too
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    image: fullstorydev/grpcui:v1.1.0
+    ports:
+      - "8081:8080"
+    command: "-plaintext host.docker.internal:${LOCAL_HOST_PORT:-9099}"
